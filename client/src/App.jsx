@@ -2,6 +2,8 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import ChatWindow from './components/ChatWindow.jsx';
 import Header from './components/Header.jsx';
 import InputArea from './components/InputArea.jsx';
+import JarvisBg from './components/JarvisBg.jsx';
+import FloatingHeart from './components/FloatingHeart.jsx';
 
 export default function App() {
   const [messages, setMessages]     = useState([]);
@@ -10,6 +12,9 @@ export default function App() {
   const [listening, setListening]   = useState(false);
   const abortRef                    = useRef(null);
   const recognitionRef              = useRef(null);
+  const heartRef                    = useRef(null);
+  const pendingTextRef              = useRef(null);
+  const sendMessageRef              = useRef(null);
 
   const sendMessage = useCallback(async (text) => {
     const content = (text || input).trim();
@@ -135,13 +140,26 @@ export default function App() {
     }
   };
 
+  // Keep sendMessageRef current so handleCrackDone never goes stale
+  sendMessageRef.current = sendMessage;
+
   const handleSuggestion = (text) => {
-    setInput(text);
-    sendMessage(text);
+    pendingTextRef.current = text;
+    heartRef.current?.triggerCrack();
   };
+
+  const handleCrackDone = useCallback(() => {
+    const text = pendingTextRef.current;
+    if (text) {
+      pendingTextRef.current = null;
+      sendMessageRef.current?.(text);
+    }
+  }, []);
 
   return (
     <>
+      <JarvisBg />
+      <FloatingHeart ref={heartRef} onCrackDone={handleCrackDone} />
       <div className="app">
         <Header onNewChat={() => { setMessages([]); setInput(''); }} />
         <ChatWindow

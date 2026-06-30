@@ -15,6 +15,7 @@ export default function Header({ onNewChat }) {
           </svg>
         </div>
         <div className="header-title">
+          <div className="dietitian-tag">⚕ Dietitian Hussein Ibrahim</div>
           <h1>Heal-ios</h1>
           <p>AI Health Assistant v1.0</p>
         </div>
