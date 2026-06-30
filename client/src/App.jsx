@@ -141,22 +141,25 @@ export default function App() {
   };
 
   return (
-    <div className="app">
-      <Header />
-      <ChatWindow
-        messages={messages}
-        streaming={streaming}
-        onSuggestion={handleSuggestion}
-      />
-      <InputArea
-        input={input}
-        setInput={setInput}
-        onSend={sendMessage}
-        onKeyDown={handleKeyDown}
-        onVoice={toggleVoice}
-        listening={listening}
-        disabled={streaming}
-      />
-    </div>
+    <>
+      <div className="app">
+        <Header onNewChat={() => { setMessages([]); setInput(''); }} />
+        <ChatWindow
+          messages={messages}
+          streaming={streaming}
+          onSuggestion={handleSuggestion}
+          onBack={() => { setMessages([]); setInput(''); }}
+        />
+        <InputArea
+          input={input}
+          setInput={setInput}
+          onSend={sendMessage}
+          onKeyDown={handleKeyDown}
+          onVoice={toggleVoice}
+          listening={listening}
+          disabled={streaming}
+        />
+      </div>
+    </>
   );
 }
