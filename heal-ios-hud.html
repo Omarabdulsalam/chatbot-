@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Heal-ios HUD</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background:#000;
+  display:flex; justify-content:center; align-items:center;
+  width:100vw; height:100vh; overflow:hidden;
+}
+canvas { display:block; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+//  TUNABLES
+// ═══════════════════════════════════════════════════════════════════════════
+const CFG = {
+  label:    'Heal-ios',   // brand name shown at top and in glitch sequence
+  accent:   '#1de9d6',   // primary cyan-teal
+  accent2:  '#80fff5',   // bright highlight
+  bg:       '#02090b',   // near-black background
+  loopSecs: 22,          // full animation cycle length (seconds)
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CANVAS SETUP
+// ═══════════════════════════════════════════════════════════════════════════
+const cv  = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const DPR = Math.min(devicePixelRatio || 1, 2);
+let W, H, CX, CY, R;
+
+function resize() {
+  const vw = innerWidth, vh = innerHeight;
+  let cw, ch;
+  if (vw / vh < 9 / 16) { cw = vw; ch = vw * 16 / 9; }
+  else                   { ch = vh; cw = vh * 9  / 16; }
+  cv.width  = cw * DPR;  cv.height = ch * DPR;
+  cv.style.width  = cw + 'px';
+  cv.style.height = ch + 'px';
+  W = cw; H = ch; CX = W / 2; CY = H / 2;
+  R = Math.min(W, H) * 0.215;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  PERLIN-ISH NOISE (2D gradient noise, no external lib)
+// ═══════════════════════════════════════════════════════════════════════════
+const _p = new Uint8Array(512);
+{
+  const t = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) t[i] = i;
+  for (let i = 255; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [t[i], t[j]] = [t[j], t[i]];
+  }
+  for (let i = 0; i < 512; i++) _p[i] = t[i & 255];
+}
+const _f = x => x * x * x * (x * (x * 6 - 15) + 10);
+const _l = (a, b, t) => a + t * (b - a);
+const _g = (h, x, y) => { h &= 7; const u=h<4?x:y, v=h<4?y:x; return ((h&1)?-u:u)+((h&2)?-v:v); };
+function noise(x, y) {
+  const xi=Math.floor(x)&255, yi=Math.floor(y)&255;
+  x -= Math.floor(x); y -= Math.floor(y);
+  const u=_f(x), v=_f(y);
+  const a=_p[xi]+yi, aa=_p[a], ab=_p[a+1];
+  const b=_p[xi+1]+yi, ba=_p[b], bb=_p[b+1];
+  return _l(_l(_g(_p[aa],x,y),  _g(_p[ba],x-1,y),  u),
+            _l(_g(_p[ab],x,y-1),_g(_p[bb],x-1,y-1),u), v);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  EASING HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
+const ease  = x => x < .5 ? 2*x*x : 1 - Math.pow(-2*x+2,2)/2;
+const clamp = (x,lo,hi) => Math.max(lo, Math.min(hi, x));
+const ramp  = (t,a,b) => ease(clamp((t-a)/(b-a),0,1));
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  BACKGROUND RADIAL GLOW
+// ═══════════════════════════════════════════════════════════════════════════
+function bgGlow() {
+  const g = ctx.createRadialGradient(CX, CY, 0, CX, CY, Math.max(W,H) * .68);
+  g.addColorStop(0,   'rgba(12,55,55,0.75)');
+  g.addColorStop(.35, 'rgba(6,30,32,0.55)');
+  g.addColorStop(1,   'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  HEX GRID TEXTURE
+// ═══════════════════════════════════════════════════════════════════════════
+function hexGrid() {
+  ctx.save();
+  ctx.globalAlpha  = .055;
+  ctx.strokeStyle  = CFG.accent;
+  ctx.lineWidth    = .6;
+  const s   = H * .033;
+  const sq3 = Math.sqrt(3);
+  const cols = Math.ceil(W / (s * 1.5)) + 2;
+  const rows = Math.ceil(H / (s * sq3))  + 2;
+  for (let c = -1; c < cols; c++) {
+    for (let r = -1; r < rows; r++) {
+      const hx = c * s * 1.5;
+      const hy = r * s * sq3 + (c % 2 ? s * sq3 / 2 : 0);
+      ctx.beginPath();
+      for (let i = 0; i < 6; i++) {
+        const a = Math.PI / 3 * i - Math.PI / 6;
+        ctx.lineTo(hx + s * Math.cos(a), hy + s * Math.sin(a));
+      }
+      ctx.closePath();
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  SCANLINE OVERLAY
+// ═══════════════════════════════════════════════════════════════════════════
+function scanlines() {
+  ctx.save();
+  ctx.globalAlpha = .032;
+  ctx.fillStyle   = '#000';
+  for (let y = 0; y < H; y += 4) ctx.fillRect(0, y, W, 2);
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  ORGANIC ENERGY RING (outer jagged/wavy ring using perlin noise)
+// ═══════════════════════════════════════════════════════════════════════════
+function energyRing(t, alpha) {
+  if (alpha <= 0) return;
+  const N     = 260;
+  const rBase = R * 1.88;
+  const pts   = [];
+
+  for (let i = 0; i <= N; i++) {
+    const a  = i / N * Math.PI * 2;
+    const n1 = noise(Math.cos(a) * 2.8 + t * .32, Math.sin(a) * 2.8 + t * .25);
+    const n2 = noise(Math.cos(a) * 5.5 + t * .65, Math.sin(a) * 5.5 - t * .45);
+    const n3 = noise(Math.cos(a) * 11  + t * 1.1, Math.sin(a) * 11  + t * .9);
+    const dr = n1 * R*.24 + n2 * R*.11 + n3 * R*.05 + Math.sin(a*4+t*1.8)*R*.04;
+    pts.push({ x: CX + Math.cos(a) * (rBase + dr), y: CY + Math.sin(a) * (rBase + dr) });
+  }
+
+  ctx.save();
+  // Wide soft outer glow
+  ctx.globalAlpha = alpha * .15;
+  ctx.strokeStyle = CFG.accent2;
+  ctx.lineWidth   = 18;
+  ctx.shadowColor = CFG.accent2;
+  ctx.shadowBlur  = 40;
+  ctx.beginPath();
+  pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+  ctx.closePath();
+  ctx.stroke();
+  // Medium glow
+  ctx.globalAlpha = alpha * .28;
+  ctx.lineWidth   = 7;
+  ctx.shadowBlur  = 22;
+  ctx.beginPath();
+  pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+  ctx.closePath();
+  ctx.stroke();
+  // Sharp ring line
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = CFG.accent;
+  ctx.lineWidth   = 1.6;
+  ctx.shadowColor = CFG.accent;
+  ctx.shadowBlur  = 10;
+  ctx.beginPath();
+  pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+  ctx.closePath();
+  ctx.stroke();
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CONCENTRIC INNER RINGS (with tick marks and arc segments)
+// ═══════════════════════════════════════════════════════════════════════════
+function concentricRings(t, alpha, scale) {
+  if (alpha <= 0) return;
+  const rings = [
+    { rm: 1.28, spd:  .20, ticks: 60, arcs: 4,  aw: .50, lw: 1.3 },
+    { rm: 1.50, spd: -.13, ticks: 48, arcs: 6,  aw: .48, lw: .9  },
+    { rm: 1.72, spd:  .09, ticks: 72, arcs: 9,  aw: .42, lw: .7  },
+  ];
+  for (const ring of rings) {
+    const r   = R * ring.rm * scale;
+    const rot = t * ring.spd;
+    ctx.save();
+    ctx.strokeStyle = CFG.accent;
+    ctx.shadowColor = CFG.accent;
+
+    // Faint base circle
+    ctx.globalAlpha = alpha * .18;
+    ctx.lineWidth   = ring.lw;
+    ctx.shadowBlur  = 3;
+    ctx.beginPath(); ctx.arc(CX, CY, r, 0, Math.PI * 2); ctx.stroke();
+
+    // Bright arc segments
+    ctx.globalAlpha = alpha * .85;
+    ctx.lineWidth   = ring.lw * 2.4;
+    ctx.shadowBlur  = 14;
+    for (let i = 0; i < ring.arcs; i++) {
+      const a0 = rot + (i / ring.arcs) * Math.PI * 2;
+      const a1 = a0 + Math.PI / ring.arcs * ring.aw;
+      ctx.beginPath(); ctx.arc(CX, CY, r, a0, a1); ctx.stroke();
+    }
+
+    // Tick marks
+    ctx.globalAlpha = alpha * .45;
+    ctx.lineWidth   = ring.lw;
+    ctx.shadowBlur  = 5;
+    for (let i = 0; i < ring.ticks; i++) {
+      const a   = rot + (i / ring.ticks) * Math.PI * 2;
+      const len = i % 4 === 0 ? 9 : 4;
+      ctx.beginPath();
+      ctx.moveTo(CX + Math.cos(a) * (r - len), CY + Math.sin(a) * (r - len));
+      ctx.lineTo(CX + Math.cos(a) * r,          CY + Math.sin(a) * r);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CORE (geodesic mesh sphere + layered glow)
+// ═══════════════════════════════════════════════════════════════════════════
+function core(t, alpha) {
+  if (alpha <= 0) return;
+  const rc    = R * .54;
+  const pulse = .92 + Math.sin(t * 1.7) * .08;
+
+  ctx.save();
+
+  // Layered ambient glow behind core
+  for (const [r, a] of [
+    [rc * 1.8, .07],
+    [rc * 1.25, .20],
+    [rc * .85,  .55],
+  ]) {
+    const g = ctx.createRadialGradient(CX, CY, 0, CX, CY, r * pulse);
+    g.addColorStop(0,  `rgba(30,233,214,${a * alpha})`);
+    g.addColorStop(.6, `rgba(10,90,100,${a * alpha * .4})`);
+    g.addColorStop(1,  'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(CX, CY, r * pulse, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // Bright hot center
+  const gc = ctx.createRadialGradient(CX, CY, 0, CX, CY, rc * .38 * pulse);
+  gc.addColorStop(0, `rgba(230,255,255,${alpha})`);
+  gc.addColorStop(1, 'rgba(30,233,214,0)');
+  ctx.fillStyle = gc;
+  ctx.beginPath(); ctx.arc(CX, CY, rc * .38 * pulse, 0, Math.PI * 2); ctx.fill();
+
+  // Triangular geodesic mesh clipped to core disc
+  ctx.globalAlpha = alpha * .38;
+  ctx.strokeStyle = CFG.accent;
+  ctx.lineWidth   = .55;
+  ctx.shadowColor = CFG.accent;
+  ctx.shadowBlur  = 3;
+  ctx.save();
+  ctx.beginPath(); ctx.arc(CX, CY, rc * .94, 0, Math.PI * 2); ctx.clip();
+  const step = rc * .25;
+  for (let row = -6; row <= 6; row++) {
+    const oy  = CY + row * step * .87;
+    const off = (row % 2) * step * .5;
+    for (let col = -6; col <= 6; col++) {
+      const ox = CX + col * step + off;
+      // Up-pointing triangle
+      ctx.beginPath();
+      ctx.moveTo(ox,          oy + step * .87);
+      ctx.lineTo(ox + step,   oy + step * .87);
+      ctx.lineTo(ox + step * .5, oy);
+      ctx.closePath();
+      ctx.stroke();
+    }
+  }
+  ctx.restore(); // unclip
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  TOP LABEL ("Heal-ios")
+// ═══════════════════════════════════════════════════════════════════════════
+function topLabel(alpha) {
+  if (alpha <= 0) return;
+  ctx.save();
+  ctx.globalAlpha  = alpha;
+  const fs         = H * .027;
+  ctx.fillStyle    = CFG.accent;
+  ctx.shadowColor  = CFG.accent2;
+  ctx.shadowBlur   = 20;
+  ctx.textAlign    = 'center';
+  ctx.textBaseline = 'middle';
+
+  // Letter-spacing via manual draw
+  ctx.font = `100 ${fs}px 'Courier New', monospace`;
+  const label = CFG.label.toUpperCase();
+  const space = fs * .9;
+  const totalW = (label.length - 1) * space;
+  for (let i = 0; i < label.length; i++) {
+    ctx.fillText(label[i], CX - totalW / 2 + i * space, H * .045);
+  }
+
+  // Circled "i" info button — top right
+  const ix = W * .91, iy = H * .04, ir = H * .018;
+  ctx.strokeStyle = CFG.accent; ctx.lineWidth = 1; ctx.shadowBlur = 8;
+  ctx.beginPath(); ctx.arc(ix, iy, ir, 0, Math.PI * 2); ctx.stroke();
+  ctx.font = `${ir * 1.0}px 'Courier New', monospace`;
+  ctx.fillText('i', ix, iy + ir * .05);
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  GLITCH TEXT ASSEMBLY (label assembles from noise chars over core)
+// ═══════════════════════════════════════════════════════════════════════════
+const GCHARS = '!@#$%^&*<>?/|\\[]{}';
+function glitchText(progress, alpha) {
+  if (alpha <= 0 || progress <= 0) return;
+  const chars = CFG.label.split('');
+  const fs    = R * .56;
+  ctx.save();
+  ctx.globalAlpha  = alpha;
+  ctx.textAlign    = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font         = `bold ${fs}px 'Courier New', monospace`;
+
+  let s = '';
+  chars.forEach((ch, i) => {
+    const cp = clamp((progress - i / chars.length) * chars.length, 0, 1);
+    s += cp >= .8 ? ch : cp > 0 ? GCHARS[Math.floor(Math.random() * GCHARS.length)] : ' ';
+  });
+
+  // RGB shift while assembling
+  if (progress < .82) {
+    ctx.fillStyle = `rgba(255,40,40,${alpha * .45})`;
+    ctx.fillText(s, CX + 3, CY + 3);
+    ctx.fillStyle = `rgba(40,40,255,${alpha * .45})`;
+    ctx.fillText(s, CX - 3, CY - 3);
+  }
+  ctx.fillStyle   = CFG.accent;
+  ctx.shadowColor = CFG.accent2;
+  ctx.shadowBlur  = 28;
+  ctx.fillText(s, CX, CY);
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  BOTTOM TOOLBAR (5 icon buttons slide up)
+// ═══════════════════════════════════════════════════════════════════════════
+function toolbar(slideY, alpha) {
+  if (alpha <= 0) return;
+  // Use simple geometric shapes so emoji font differences don't matter
+  const btnR   = H * .028;
+  const spacing = W * .13;
+  const y      = H * .91 + slideY;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = CFG.accent;
+  ctx.lineWidth   = 1.2;
+  ctx.shadowColor = CFG.accent;
+  ctx.shadowBlur  = 14;
+
+  const drawBtn = (x, drawFn) => {
+    ctx.beginPath(); ctx.arc(x, y, btnR, 0, Math.PI * 2); ctx.stroke();
+    ctx.save(); ctx.translate(x, y); drawFn(); ctx.restore();
+  };
+
+  // Power
+  drawBtn(CX - spacing * 2, () => {
+    const r = btnR * .52;
+    ctx.beginPath(); ctx.arc(0, 0, r, Math.PI*.25, Math.PI*1.75); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, -r * 1.3); ctx.lineTo(0, -r * .4); ctx.stroke();
+  });
+  // Share / arrow
+  drawBtn(CX - spacing, () => {
+    ctx.beginPath();
+    ctx.moveTo(-btnR*.35, btnR*.35); ctx.lineTo(btnR*.35, -btnR*.35);
+    ctx.lineTo(btnR*.05, -btnR*.35); ctx.moveTo(btnR*.35, -btnR*.35);
+    ctx.lineTo(btnR*.35, -btnR*.05); ctx.stroke();
+  });
+  // Mic / waveform rings
+  drawBtn(CX, () => {
+    ctx.strokeStyle = CFG.accent2; ctx.shadowColor = CFG.accent2;
+    for (const r of [btnR*.22, btnR*.42, btnR*.62]) {
+      ctx.globalAlpha = alpha * (1 - r / btnR);
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI*2); ctx.stroke();
+    }
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = CFG.accent;
+    ctx.beginPath(); ctx.arc(0, 0, btnR * .18, 0, Math.PI*2); ctx.fill();
+  });
+  // Scan / crosshair
+  drawBtn(CX + spacing, () => {
+    const r = btnR * .45;
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-btnR*.68, 0); ctx.lineTo(-r, 0);
+    ctx.moveTo( btnR*.68, 0); ctx.lineTo( r, 0);
+    ctx.moveTo(0, -btnR*.68); ctx.lineTo(0, -r);
+    ctx.moveTo(0,  btnR*.68); ctx.lineTo(0,  r);
+    ctx.stroke();
+  });
+  // Helmet hexagon
+  drawBtn(CX + spacing * 2, () => {
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const a = Math.PI / 3 * i - Math.PI / 6;
+      ctx.lineTo(Math.cos(a) * btnR * .55, Math.sin(a) * btnR * .55);
+    }
+    ctx.closePath(); ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, 0, btnR * .2, 0, Math.PI*2); ctx.stroke();
+  });
+
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  LIVE CLOCK
+// ═══════════════════════════════════════════════════════════════════════════
+function clock(alpha) {
+  if (alpha <= 0) return;
+  const now = new Date();
+  let h     = now.getHours();
+  const m   = now.getMinutes(), s = now.getSeconds();
+  const ap  = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  const ts  = `${h}:${String(m).padStart(2,'0')}`;
+
+  ctx.save();
+  ctx.globalAlpha  = alpha;
+  ctx.textAlign    = 'center';
+  ctx.textBaseline = 'middle';
+
+  // Ring around the clock
+  ctx.strokeStyle = CFG.accent; ctx.lineWidth = 1.3;
+  ctx.shadowColor = CFG.accent; ctx.shadowBlur = 10;
+  ctx.beginPath(); ctx.arc(CX, CY, R * .68, 0, Math.PI * 2); ctx.stroke();
+
+  // Hours:Minutes
+  ctx.font        = `bold ${R * .44}px 'Courier New', monospace`;
+  ctx.fillStyle   = CFG.accent2;
+  ctx.shadowColor = CFG.accent2; ctx.shadowBlur = 24;
+  ctx.fillText(ts, CX, CY - R * .04);
+
+  // AM/PM
+  ctx.font        = `${R * .15}px 'Courier New', monospace`;
+  ctx.fillStyle   = CFG.accent; ctx.shadowBlur = 10;
+  ctx.textAlign   = 'left';
+  ctx.fillText(ap, CX + R * .46, CY - R * .24);
+
+  // Seconds
+  ctx.textAlign = 'center';
+  ctx.fillText(String(s).padStart(2,'0'), CX, CY + R * .32);
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CALENDAR CARD (flips in)
+// ═══════════════════════════════════════════════════════════════════════════
+function calendar(alpha, flip) {
+  if (alpha <= 0) return;
+  const now   = new Date();
+  const month = now.toLocaleString('default', { month:'long' }).toUpperCase();
+  const day   = now.getDate();
+  const dow   = now.toLocaleString('default', { weekday:'short' }).toUpperCase();
+
+  const cw = W * .38, ch = H * .17;
+  const scY = Math.abs(Math.cos(flip * Math.PI));
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(CX, CY); ctx.scale(1, scY || .001); ctx.translate(-CX, -CY);
+
+  const x = CX - cw / 2, y = CY - ch / 2;
+
+  // Card body
+  ctx.fillStyle   = 'rgba(2,9,11,0.9)';
+  ctx.strokeStyle = CFG.accent;
+  ctx.lineWidth   = 1.5;
+  ctx.shadowColor = CFG.accent; ctx.shadowBlur = 22;
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(x, y, cw, ch, 10);
+  else               ctx.rect(x, y, cw, ch);
+  ctx.fill(); ctx.stroke();
+
+  // Month header strip
+  ctx.fillStyle = 'rgba(30,233,214,.1)';
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(x, y, cw, ch * .3, [10,10,0,0]);
+  else               ctx.rect(x, y, cw, ch * .3);
+  ctx.fill();
+
+  ctx.fillStyle    = CFG.accent;
+  ctx.textAlign    = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.shadowBlur   = 8;
+  ctx.font         = `${ch * .19}px 'Courier New', monospace`;
+  ctx.fillText(month, CX, y + ch * .15);
+
+  ctx.font       = `bold ${ch * .52}px 'Courier New', monospace`;
+  ctx.shadowBlur = 18;
+  ctx.fillText(String(day), CX, y + ch * .63);
+
+  ctx.font       = `${ch * .16}px 'Courier New', monospace`;
+  ctx.shadowBlur = 8;
+  ctx.fillText(dow, CX, y + ch * .9);
+
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  IRON MAN SUIT WIREFRAME + POWER BAR
+// ═══════════════════════════════════════════════════════════════════════════
+function suit(alpha, powerFrac) {
+  if (alpha <= 0) return;
+  const sc = H * .0028;
+  const ox = W * .24, oy = H * .50;
+
+  const L = (pts, close=false) => {
+    ctx.beginPath();
+    pts.forEach(([x,y], i) => i
+      ? ctx.lineTo(ox + x*sc, oy + y*sc)
+      : ctx.moveTo(ox + x*sc, oy + y*sc));
+    if (close) ctx.closePath();
+    ctx.stroke();
+  };
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = CFG.accent;
+  ctx.lineWidth   = 1;
+  ctx.shadowColor = CFG.accent;
+  ctx.shadowBlur  = 10;
+
+  // ── Helmet ──────────────────────────────────────────────────────
+  L([[-20,-92],[-26,-58],[-14,-44],[14,-44],[26,-58],[20,-92]], true);
+  L([[-14,-44],[14,-44],[16,-30],[-16,-30]], true);   // lower face
+  L([[-14,-72],[-6,-72],[-6,-62],[-14,-62]], true);   // left eye
+  L([[6,-72],[14,-72],[14,-62],[6,-62]], true);        // right eye
+  L([[-10,-30],[10,-30],[8,-18],[-8,-18]], true);      // neck
+
+  // ── Chest & abs ─────────────────────────────────────────────────
+  L([[-20,-18],[20,-18],[24,12],[-24,12]], true);
+  L([[-24,12],[24,12],[22,40],[-22,40]], true);
+  L([[-22,40],[22,40],[20,66],[-20,66]], true);
+  L([[-20,66],[20,66],[15,76],[-15,76]], true);       // waist
+
+  // ── Shoulders ───────────────────────────────────────────────────
+  L([[-20,-18],[-50,-8],[-54,20],[-26,22]], true);
+  L([[20,-18],[50,-8],[54,20],[26,22]], true);
+
+  // ── Upper arms ──────────────────────────────────────────────────
+  L([[-54,20],[-50,56],[-30,58],[-26,22]], true);
+  L([[54,20],[50,56],[30,58],[26,22]], true);
+
+  // ── Arc reactor ─────────────────────────────────────────────────
+  ctx.strokeStyle = CFG.accent2; ctx.lineWidth = 1.6; ctx.shadowBlur = 22;
+  ctx.beginPath(); ctx.arc(ox, oy - 10*sc, 10*sc, 0, Math.PI*2); ctx.stroke();
+  ctx.fillStyle = `rgba(30,233,214,${alpha * .9})`;
+  ctx.shadowBlur = 30;
+  ctx.beginPath(); ctx.arc(ox, oy - 10*sc, 5*sc, 0, Math.PI*2); ctx.fill();
+
+  ctx.restore();
+
+  // ── POWER LEVEL bar ─────────────────────────────────────────────
+  if (powerFrac > 0) {
+    const bx = W * .05, by = H * .88;
+    const bw = W * .38,  bh = H * .016;
+    ctx.save();
+    ctx.globalAlpha  = alpha;
+    ctx.fillStyle    = CFG.accent;
+    ctx.shadowColor  = CFG.accent; ctx.shadowBlur = 6;
+    ctx.font         = `${H * .016}px 'Courier New', monospace`;
+    ctx.textAlign    = 'left';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(`POWER LEVEL   ${Math.round(powerFrac * 100)}.0%`, bx, by - H * .005);
+    ctx.strokeStyle  = CFG.accent; ctx.lineWidth = 1; ctx.shadowBlur = 6;
+    ctx.strokeRect(bx, by, bw, bh);
+    ctx.fillStyle    = CFG.accent; ctx.shadowBlur = 18;
+    ctx.fillRect(bx + 1, by + 1, (bw - 2) * powerFrac, bh - 2);
+    ctx.restore();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  MAIN ANIMATION LOOP
+// ═══════════════════════════════════════════════════════════════════════════
+let t0 = null;
+
+function frame(ts) {
+  if (!t0) t0 = ts;
+  const elapsed = (ts - t0) / 1000;            // total seconds since start
+  const t       = elapsed % CFG.loopSecs;       // 0..22, looping
+
+  // Reset transform each frame (handles resize edge-cases)
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+  // ── Background ────────────────────────────────────────────────
+  ctx.fillStyle = CFG.bg;
+  ctx.fillRect(0, 0, W, H);
+  bgGlow();
+  hexGrid();
+  scanlines();
+
+  // ── Timeline ramps (0..22s) ───────────────────────────────────
+  //  0.0 – 3.0  core + energy ring power up
+  const coreA    = ramp(t, 0.0, 2.5);
+  const ringA    = ramp(t, 1.2, 3.5);
+
+  //  3.0 – 5.2  "Heal-ios" glitch text over core
+  const glitchP  = ramp(t, 3.0, 4.8);
+  const glitchA  = ramp(t, 3.0, 4.2) * (1 - ramp(t, 4.7, 5.3));
+
+  //  5.0 – 8.0  rings expand + toolbar slides up
+  const expand   = ramp(t, 5.0, 7.5);
+  const toolA    = ramp(t, 5.5, 7.5) * (1 - ramp(t, 20.5, 21.5));
+  const toolSlide = (1 - ramp(t, 5.5, 7.5)) * H * .07;
+
+  //  8.0 – 11.0  live clock face
+  const clockA   = ramp(t, 8.0, 9.2) * (1 - ramp(t, 10.5, 11.2));
+
+  // 11.0 – 14.0  calendar card flips in
+  const calA     = ramp(t, 11.0, 12.2) * (1 - ramp(t, 13.5, 14.2));
+  const calFlip  = ramp(t, 11.0, 12.4);
+
+  // 14.0 – 17.0  idle (core + rings only)
+  // 17.0 – 21.5  suit wireframe + power bar
+  const suitA    = ramp(t, 17.0, 18.5) * (1 - ramp(t, 20.5, 21.5));
+  const powerFrac = ramp(t, 17.5, 20.5);
+
+  // Top label always present after 0.3s
+  const labelA   = ramp(t, 0.3, 1.8);
+
+  // Rings subtly expand between 5-8s
+  const ringScale = 1 + expand * .14;
+
+  // ── Draw calls ────────────────────────────────────────────────
+  topLabel(labelA);
+  if (coreA > 0)  energyRing(elapsed, coreA);
+  if (ringA > 0)  concentricRings(elapsed, ringA, ringScale);
+  if (coreA > 0)  core(elapsed, coreA);
+  if (glitchA > 0) glitchText(glitchP, glitchA);
+  if (toolA > 0)  toolbar(toolSlide, toolA);
+  if (clockA > 0) clock(clockA);
+  if (calA > 0)   calendar(calA, calFlip);
+  if (suitA > 0)  suit(suitA, powerFrac);
+
+  requestAnimationFrame(frame);
+}
+
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
